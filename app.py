@@ -22,7 +22,7 @@ def load_data_from_sheet():
     client = gspread.authorize(creds)
     
     # Mở Google Sheet (Thay tên file của bạn vào đây)
-    sheet = client.open("Data_Ton_Kho_Gia").sheet1
+    sheet = client.open("File check gia").sheet1
     data = sheet.get_all_records()
     return pd.DataFrame(data)
 
