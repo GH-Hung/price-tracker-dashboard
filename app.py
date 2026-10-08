@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import gspread
 from google.oauth2.service_account import Credentials
+import crawler
 
 st.set_page_config(page_title="Dashboard Khảo Sát & So Sánh Giá", layout="wide")
 
@@ -30,12 +31,10 @@ def load_data():
     client = gspread.authorize(creds)
     sheet = client.open("File check gia").worksheet("Data_Gia_Thi_Truong")
     
-    # Lấy tất cả giá trị dưới dạng danh sách các hàng
     rows = sheet.get_all_values()
     if not rows or len(rows) < 2:
         return pd.DataFrame()
     
-    # Chuẩn hóa tên cột
     headers = [str(h).strip() for h in rows[0]]
     df = pd.DataFrame(rows[1:], columns=headers)
     return df
@@ -55,7 +54,6 @@ if df.empty:
 # ----------------------------------------------------
 st.sidebar.header("⚙️ Điều Khiển & Lựa Chọn")
 
-# Tìm cột SKU / Tên sản phẩm
 product_col = None
 for col in df.columns:
     if "Ten_San_Pham" in col or "San_Pham" in col:
@@ -70,9 +68,21 @@ tolerance_pct = st.sidebar.number_input("Cài đặt Dung sai (%):", min_value=0
 
 st.sidebar.markdown("---")
 
+# Nút Làm mới dữ liệu
 if st.sidebar.button("🔄 Làm mới dữ liệu", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
+
+# Nút Quét Giá Live (Đã khôi phục)
+if st.sidebar.button("🚀 Quét Giá Live (Khởi chạy Bot)", type="primary", use_container_width=True):
+    with st.spinner("🤖 Bot đang bóc tách link & quét giá Shopee qua ScraperAPI... Vui lòng chờ..."):
+        try:
+            crawler.run_crawler_with_creds(dict(st.secrets["gcp_service_account"]))
+            st.sidebar.success("✅ Đã quét giá thành công và cập nhật vào Google Sheet!")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as err:
+            st.sidebar.error(f"❌ Lỗi khi quét giá: {err}")
 
 # ----------------------------------------------------
 # 4. XỬ LÝ DỮ LIỆU DÒNG ĐƯỢC CHỌN
@@ -84,8 +94,6 @@ if selected_df.empty:
 
 selected_row = selected_df.iloc[0]
 
-# Xác định giá trị theo thứ tự cột cố định nếu tên cột bị đổi
-# Cột C (Index 2): Giá bán, Cột J (Index 9): Giá Shopee
 my_price_raw = selected_row.iloc[2] if len(selected_row) > 2 else 0
 shopee_price_raw = selected_row.iloc[9] if len(selected_row) > 9 else 0
 
@@ -94,7 +102,7 @@ promo_price = parse_price(selected_row.iloc[3]) if len(selected_row) > 3 and par
 shopee_price = parse_price(shopee_price_raw)
 
 # ----------------------------------------------------
-# 5. HIỂN THỊ CÁC THÔNG SỐ SO SÁNH
+# 5. HIỂN THỊ DỮ LIỆU DUNG SAI & BẢNG SO SÁNH
 # ----------------------------------------------------
 st.title(f"📦 {selected_product}")
 st.markdown(f"**Giá bạn đang bán:** {my_price:,.0f} đ | **Giá KM:** :green[{promo_price:,.0f} đ]")
