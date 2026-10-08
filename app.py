@@ -73,16 +73,20 @@ if st.sidebar.button("🔄 Làm mới dữ liệu", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-# Nút Quét Giá Live (Đã khôi phục)
+# Nút Quét Giá Live với thông báo tiến trình chi tiết
 if st.sidebar.button("🚀 Quét Giá Live (Khởi chạy Bot)", type="primary", use_container_width=True):
-    with st.spinner("🤖 Bot đang bóc tách link & quét giá Shopee qua ScraperAPI... Vui lòng chờ..."):
-        try:
-            crawler.run_crawler_with_creds(dict(st.secrets["gcp_service_account"]))
-            st.sidebar.success("✅ Đã quét giá thành công và cập nhật vào Google Sheet!")
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as err:
-            st.sidebar.error(f"❌ Lỗi khi quét giá: {err}")
+    status_placeholder = st.sidebar.empty()
+    status_placeholder.info("🤖 Bot bắt đầu khởi chạy...")
+    try:
+        def update_status(msg):
+            status_placeholder.info(msg)
+
+        count = crawler.run_crawler_with_creds(dict(st.secrets["gcp_service_account"]), status_callback=update_status)
+        st.sidebar.success(f"🎉 Hoàn tất! Đã cập nhật {count} sản phẩm vào Google Sheet.")
+        st.cache_data.clear()
+        st.rerun()
+    except Exception as err:
+        st.sidebar.error(f"❌ Lỗi khi quét giá: {err}")
 
 # ----------------------------------------------------
 # 4. XỬ LÝ DỮ LIỆU DÒNG ĐƯỢC CHỌN
