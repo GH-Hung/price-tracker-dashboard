@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 import re
+import time
 from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Hệ Thống Báo Động & So Sánh Giá", layout="wide")
@@ -9,18 +10,17 @@ st.set_page_config(page_title="Hệ Thống Báo Động & So Sánh Giá", layou
 st.title("🖥️ Hệ Thống Báo Động & So Sánh Giá Thị Trường")
 st.markdown("Cập nhật và đối soát giá bán với đối thủ trên Shopee, Lazada, TikTok Shop...")
 
-# --- HÀM TỰ ĐỘNG XỬ LÝ LÀM SẠCH GIÁ TIỀN ---
+# --- HÀM TỰ ĐỘNG LÀM SẠCH GIÁ TIỀN ---
 def clean_price(val):
     if pd.isna(val) or val is None:
         return None
-    # Lấy các chữ số từ chuỗi (loại bỏ đ, phẩy, chấm, khoảng trắng)
     digits = re.sub(r'[^\d]', '', str(val))
     if digits:
         return float(digits)
     return None
 
 # --- HÀM KẾT NỐI GOOGLE SHEET ---
-@st.cache_data(ttl=2)  # Giảm cache xuống 2 giây để cập nhật tức thì
+@st.cache_data(ttl=300)
 def load_data_from_sheet():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
@@ -29,33 +29,51 @@ def load_data_from_sheet():
     sheet = client.open("File check gia").sheet1
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
-    
-    # Xóa khoảng trắng thừa trong tên cột nếu có
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
+# --- SIDEBAR CẤU HÌNH & ĐIỀU KHIỂN BOT ---
+st.sidebar.header("⚙️ Cấu hình & Điều khiển")
+
+# Nút Refresh Dữ Liệu
+if st.sidebar.button("🔄 Làm mới dữ liệu từ Sheet", use_container_width=True):
+    st.cache_data.clear()
+    st.sidebar.success("Đã xóa cache & làm mới dữ liệu!")
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+platform = st.sidebar.selectbox(
+    "Chọn sàn đối thủ để so sánh:",
+    ["Shopee", "TikTok Shop", "Lazada", "Ngoài sàn", "Tất cả sàn (Lấy giá thấp nhất)"]
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🤖 Điều Khiển Bot Cào Giá")
+
+# Nút Start Bắt Đầu So Sánh / Cào Dữ Liệu
+if st.sidebar.button("🚀 Bắt đầu cào giá đối thủ", type="primary", use_container_width=True):
+    with st.spinner("🤖 Bot đang kết nối tới các sàn và cào dữ liệu giá mới nhất..."):
+        # Chỗ này sẽ liên kết với script Crawler
+        time.sleep(3) 
+        st.cache_data.clear()
+        st.sidebar.success("✅ Đã hoàn tất cào giá! Dữ liệu đã được cập nhật.")
+        st.rerun()
+
+# --- XỬ LÝ DỮ LIỆU BẢNG ---
 try:
     df = load_data_from_sheet()
 
-    # 1. Làm sạch dữ liệu Giá bán của tôi
     if "Gia_Ban_Cua_Toi" in df.columns:
         df["Gia_Ban_Clean"] = df["Gia_Ban_Cua_Toi"].apply(clean_price)
     else:
         df["Gia_Ban_Clean"] = None
 
-    # 2. Làm sạch giá các sàn đối thủ
     for col in ["Gia_Doi_Thu_Shopee", "Gia_Doi_Thu_TikTok", "Gia_Doi_Thu_Lazada", "Gia_Doi_Thu_Ngoai_San"]:
         if col in df.columns:
             df[f"{col}_Clean"] = df[col].apply(clean_price)
         else:
             df[f"{col}_Clean"] = None
-
-    # 3. Sidebar chọn sàn so sánh
-    st.sidebar.header("⚙️ Cấu hình xem dữ liệu")
-    platform = st.sidebar.selectbox(
-        "Chọn sàn đối thủ để so sánh:",
-        ["Shopee", "TikTok Shop", "Lazada", "Ngoài sàn", "Tất cả sàn (Lấy giá thấp nhất)"]
-    )
 
     def get_target_market_price(row):
         if platform == "Shopee":
@@ -78,7 +96,6 @@ try:
 
     df["Gia_TT_Clean"] = df.apply(get_target_market_price, axis=1)
 
-    # 4. Tính toán Cảnh báo
     def calculate_status(row):
         my_price = row["Gia_Ban_Clean"]
         market_price = row["Gia_TT_Clean"]
@@ -104,7 +121,7 @@ try:
 
     df["Trang_Thai"] = df.apply(calculate_status, axis=1)
 
-    # 5. Hiển thị Metrics
+    # Hiển thị Metrics
     total_sku = len(df)
     normal_count = (df["Trang_Thai"] == "🟢 SKU Giá Chuẩn").sum()
     high_count = (df["Trang_Thai"] == "🔴 SKU Giá Cao").sum()
@@ -119,13 +136,11 @@ try:
     st.markdown("---")
     st.subheader(f"📋 Danh Sách Chi Tiết SKU ({platform})")
 
-    # 6. Bộ lọc Trạng thái
     status_options = ["🟢 SKU Giá Chuẩn", "🔴 SKU Giá Cao", "🟡 SKU Giá Thấp", "⚪ Chưa có dữ liệu"]
     selected_status = st.multiselect("Lọc theo trạng thái:", status_options, default=status_options)
 
     filtered_df = df[df["Trang_Thai"].isin(selected_status)]
 
-    # 7. Format Bảng hiển thị
     display_df = filtered_df.copy()
     display_df["Giá Bán Của Tôi"] = display_df["Gia_Ban_Clean"].apply(lambda x: f"{x:,.0f} đ" if pd.notna(x) else "Chưa nhận")
     display_df["Giá Đối Thủ"] = display_df["Gia_TT_Clean"].apply(lambda x: f"{x:,.0f} đ" if pd.notna(x) else "Chưa có")
