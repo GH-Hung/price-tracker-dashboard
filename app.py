@@ -1,17 +1,16 @@
 import streamlit as st
 import pandas as pd
 import re
-import subprocess
 import gspread
 from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Dashboard Khảo Sát & So Sánh Giá", layout="wide")
 
 # ----------------------------------------------------
-# 1. HÀM CHUẨN HÓA GIÁ (Xử lý dấu phẩy, chấm, chuỗi)
+# 1. HÀM CHUẨN HÓA GIÁ
 # ----------------------------------------------------
 def parse_price(val):
-    if pd.isna(val) or val is None or val == "":
+    if pd.isna(val) or val is None or str(val).strip() == "":
         return 0.0
     try:
         if isinstance(val, (int, float)):
@@ -24,14 +23,22 @@ def parse_price(val):
 # ----------------------------------------------------
 # 2. ĐỌC DỮ LIỆU TỪ GOOGLE SHEET
 # ----------------------------------------------------
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=3)
 def load_data():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     sheet = client.open("File check gia").worksheet("Data_Gia_Thi_Truong")
-    data = sheet.get_all_records()
-    return pd.DataFrame(data)
+    
+    # Lấy tất cả giá trị dưới dạng danh sách các hàng
+    rows = sheet.get_all_values()
+    if not rows or len(rows) < 2:
+        return pd.DataFrame()
+    
+    # Chuẩn hóa tên cột
+    headers = [str(h).strip() for h in rows[0]]
+    df = pd.DataFrame(rows[1:], columns=headers)
+    return df
 
 try:
     df = load_data()
@@ -48,9 +55,16 @@ if df.empty:
 # ----------------------------------------------------
 st.sidebar.header("⚙️ Điều Khiển & Lựa Chọn")
 
-sku_column = "Ten_San_Pham" if "Ten_San_Pham" in df.columns else df.columns[0]
-sku_list = df[sku_column].astype(str).tolist()
+# Tìm cột SKU / Tên sản phẩm
+product_col = None
+for col in df.columns:
+    if "Ten_San_Pham" in col or "San_Pham" in col:
+        product_col = col
+        break
+if not product_col:
+    product_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
 
+sku_list = df[product_col].astype(str).tolist()
 selected_product = st.sidebar.selectbox("🎯 Chọn Mã SKU / Sản phẩm:", sku_list)
 tolerance_pct = st.sidebar.number_input("Cài đặt Dung sai (%):", min_value=0.0, max_value=50.0, value=5.0, step=0.5)
 
@@ -60,27 +74,24 @@ if st.sidebar.button("🔄 Làm mới dữ liệu", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-if st.sidebar.button("🚀 Quét Giá Live (Khởi chạy Bot)", type="primary", use_container_width=True):
-    with st.spinner("Bot đang quét giá qua ScraperAPI, vui lòng chờ..."):
-        try:
-            result = subprocess.run(["python", "crawler.py"], capture_output=True, text=True, timeout=120)
-            st.sidebar.success("Đã hoàn tất tiến trình quét giá!")
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as err:
-            st.sidebar.error(f"Lỗi khi chạy bot: {err}")
-
 # ----------------------------------------------------
-# 4. BÓC TÁCH DỮ LIỆU SẢN PHẨM ĐƯỢC CHỌN
+# 4. XỬ LÝ DỮ LIỆU DÒNG ĐƯỢC CHỌN
 # ----------------------------------------------------
-selected_row = df[df[sku_column].astype(str) == selected_product].iloc[0]
+selected_df = df[df[product_col].astype(str) == selected_product]
+if selected_df.empty:
+    st.error("Không tìm thấy dữ liệu cho sản phẩm đã chọn.")
+    st.stop()
 
-my_price = parse_price(selected_row.get("Gia_Ban_Cua_Toi", 0))
-promo_price = parse_price(selected_row.get("Gia_Khuyen_Mai", 0))
-if promo_price == 0:
-    promo_price = my_price
+selected_row = selected_df.iloc[0]
 
-shopee_price = parse_price(selected_row.get("Gia_Doi_Thu_Shopee", 0))
+# Xác định giá trị theo thứ tự cột cố định nếu tên cột bị đổi
+# Cột C (Index 2): Giá bán, Cột J (Index 9): Giá Shopee
+my_price_raw = selected_row.iloc[2] if len(selected_row) > 2 else 0
+shopee_price_raw = selected_row.iloc[9] if len(selected_row) > 9 else 0
+
+my_price = parse_price(my_price_raw)
+promo_price = parse_price(selected_row.iloc[3]) if len(selected_row) > 3 and parse_price(selected_row.iloc[3]) > 0 else my_price
+shopee_price = parse_price(shopee_price_raw)
 
 # ----------------------------------------------------
 # 5. HIỂN THỊ CÁC THÔNG SỐ SO SÁNH
@@ -93,7 +104,7 @@ if shopee_price > 0:
     min_allowed = avg_market_price * (1 - tolerance_pct / 100)
     max_allowed = avg_market_price * (1 + tolerance_pct / 100)
     
-    st.info(f"⚖️ **Giá Trung Bình Thị Trường:** **{avg_market_price:,.0f} đ** *(Dựa trên dữ liệu thu thập)*")
+    st.info(f"⚖️ **Giá Trung Bình Thị Trường:** **{avg_market_price:,.0f} đ** *(Dựa trên dữ liệu khảo sát đối thủ)*")
     
     if promo_price < min_allowed:
         st.error(f"🚨 **CẢNH BÁO:** Giá của bạn ({promo_price:,.0f}đ) đang **THẤP HƠN** thị trường quá {tolerance_pct}% (Khung giá an toàn: {min_allowed:,.0f}đ - {max_allowed:,.0f}đ)")
@@ -118,8 +129,5 @@ table_df = pd.DataFrame({
 st.table(table_df)
 
 with st.expander("🔗 Bấm vào đây để Xem Chi Tiết Link Đối Thủ & Đối Soát"):
-    shopee_links = str(selected_row.get("Link_Shopee", ""))
-    if shopee_links:
-        st.markdown(f"- **Link đối thủ Shopee:** {shopee_links}")
-    else:
-        st.write("Chưa có thông tin link đối thủ.")
+    shopee_link_val = selected_row.iloc[8] if len(selected_row) > 8 else "Chưa có dữ liệu"
+    st.markdown(f"- **Link đối thủ Shopee:** {shopee_link_val}")
