@@ -107,7 +107,7 @@ try:
         st.subheader(f"📦 [{selected_sku}] {row.get('Ten_San_Pham', '')}")
         p_val = f"{my_price:,.0f} đ" if my_price else "Chưa có"
         p_promo_val = f"{my_promo_price:,.0f} đ" if my_promo_price else "Chưa có"
-        st.markdown(f"**Giá bạn đang bán:** `{p_val}` | **Giá KM:** <span style='color:green; font-weight:bold;'>{p_promo_val}</span>", unsafe_allow_allow_html=True)
+        st.markdown(f"**Giá bạn đang bán:** `{p_val}` | **Giá KM:** <span style='color:green; font-weight:bold;'>{p_promo_val}</span>", unsafe_allow_html=True)
 
     with col_status:
         # Tính toán Trạng thái Dung sai
